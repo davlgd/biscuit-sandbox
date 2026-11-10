@@ -7,9 +7,9 @@
 //! # Root key signing sandbox tokens (`biscuit-ssh admin keygen`): the
 //! # bastion's [containers] root_public_key, distinct from the main root key.
 //! signing_key = "/etc/biscuit-ssh/sandbox.key"
-//! state_dir = "/var/lib/biscuit-ssh-sandbox"
+//! state_dir = "/var/lib/biscuit-sandbox"
 //! # Written by the sandbox, read by the bastion's [containers] section.
-//! revocation_list = "/var/lib/biscuit-ssh-sandbox/revoked"
+//! revocation_list = "/var/lib/biscuit-sandbox/revoked"
 //! # Optional, defaults shown.
 //! label = "biscuit-ssh.sandbox"  # the bastion's [containers] label
 //! account = "root"               # account sessions run as
@@ -30,7 +30,7 @@
 //! pids = 256
 //! pull_timeout = 300             # seconds
 //! # disk_mb = 2048               # writable layer size; needs overlay2 on XFS
-//! #                              # with project quotas, unbounded otherwise
+//! #                              # with project quotas, creations fail otherwise
 //!
 //! [tls]
 //! certificate = "/etc/biscuit-ssh/tls.crt"
@@ -218,10 +218,9 @@ impl Config {
         ensure!(!self.label.is_empty(), "label must not be empty");
         let text = std::fs::read_to_string(&self.signing_key)
             .with_context(|| format!("cannot read {}", self.signing_key.display()))?;
-        let key: PrivateKey = text.trim().parse().context("invalid signing_key")?;
         Ok(Settings {
             allowed_clients: self.allowed_clients.iter().map(IpAddr::to_canonical).collect(),
-            signing_key: KeyPair::from(&key),
+            signing_key: signing_key(&text)?,
             label: self.label.clone(),
             account: self.account.parse().context("invalid account")?,
             bastion: Bastion::new(&self.bastion.address, &self.bastion.host_key)?,
@@ -237,6 +236,20 @@ impl Config {
             pull_timeout: Duration::from_secs(limits.pull_timeout),
         })
     }
+}
+
+/// The key pair of the service, which signs a token at each creation or renewal.
+///
+/// Only Ed25519 keys are accepted: P-256 signatures go through
+/// `crypto-bigint` 0.5, whose operations aren't constant-time
+/// (RUSTSEC-2026-0387), and remote clients can trigger them at will.
+fn signing_key(text: &str) -> anyhow::Result<KeyPair> {
+    let key: PrivateKey = text.trim().parse().context("invalid signing_key")?;
+    ensure!(
+        matches!(key, PrivateKey::Ed25519(_)),
+        "signing_key must be an Ed25519 key, such as one from biscuit-ssh admin keygen"
+    );
+    Ok(KeyPair::from(&key))
 }
 
 #[cfg(test)]
@@ -271,6 +284,16 @@ mod tests {
         let bastion = Bastion::new("[2001:db8::1]:22", key).unwrap();
         assert_eq!(bastion.known_hosts, format!("2001:db8::1 {key}"));
         assert!(Bastion::new("bastion.example.com:2200", "SHA256:x").is_err());
+    }
+
+    #[test]
+    fn accepts_only_ed25519_signing_keys() {
+        let ed25519 = KeyPair::new().private().to_prefixed_string();
+        assert!(signing_key(&format!("{ed25519}\n")).is_ok());
+        let p256 = format!("secp256r1-private/{}", "01".repeat(32));
+        assert!(p256.parse::<PrivateKey>().is_ok());
+        let error = signing_key(&p256).err().unwrap().to_string();
+        assert!(error.contains("Ed25519"), "{error}");
     }
 
     #[test]

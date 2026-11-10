@@ -167,9 +167,17 @@ async fn create(
         Err(failure) => return failure_response(&failure),
     };
     let client = peer.ip().to_canonical();
-    match sandboxes.create(&image, ttl, client).await {
-        Ok(lease) => (StatusCode::CREATED, Json(lease_response(&sandboxes, lease))).into_response(),
-        Err(failure) => failure_response(&failure),
+    // The creation runs in a task of its own: a client disconnecting while
+    // the image is pulled would otherwise cancel it halfway, leaving a
+    // reservation nothing completes. An abandoned sandbox expires as usual.
+    let creation = {
+        let sandboxes = Arc::clone(&sandboxes);
+        tokio::spawn(async move { sandboxes.create(&image, ttl, client).await })
+    };
+    match creation.await {
+        Ok(Ok(lease)) => (StatusCode::CREATED, Json(lease_response(&sandboxes, lease))).into_response(),
+        Ok(Err(failure)) => failure_response(&failure),
+        Err(_) => failure_response(&Failure::Unavailable),
     }
 }
 

@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # End-to-end scenarios against a running sandbox service and bastion. Run from
-# the repository root, with the biscuit-ssh client built (cargo build --release):
+# the repository root, with the biscuit-ssh client built in ../biscuit-ssh
+# (cargo build --release there), or E2E_CLIENT set to its path:
 #
 #   E2E_API=https://sandbox.example.com:8444 E2E_API_CA=ca.crt \
 #   E2E_BASTION=bastion.example.com:2200 E2E_ADMIN=admin@sandbox-host \
 #   E2E_SANDBOX_KEY=/etc/biscuit-ssh/sandbox.key E2E_ROOT_KEY=root.key \
-#   E2E_SERVER=web-1 E2E_SERVER_USER=deploy sandbox/tests/e2e.sh
+#   E2E_SERVER=web-1 E2E_SERVER_USER=deploy E2E_UNIT=biscuit-sandbox \
+#   E2E_STATE_DIR=/var/lib/biscuit-sandbox tests/e2e.sh
+#
+# The service must serve HTTPS, with limits.lifetime at 3600 (the default):
+# the scenarios renew a sandbox for an hour.
 #
 # E2E_ADMIN is an SSH destination with sudo on the host running the service,
 # Docker and the bastion: requests from there come from a non-allowed address.
+# That account needs docker without sudo, and biscuit-ssh, curl and python3 in
+# its PATH.
 # E2E_SANDBOX_KEY is the sandbox signing key on that host, E2E_ROOT_KEY the
 # main root key here, and E2E_SERVER a server the bastion relays over SSH,
 # where E2E_SERVER_USER exists: both check that each key only reaches its own
-# kind of target. The service's lifetime must allow a 60 s sandbox.
+# kind of target.
 #
 # Recovery scenarios stop and start the service: E2E_UNIT is its systemd unit,
 # E2E_STATE_DIR its state_dir, E2E_LABEL its label (default below).
@@ -29,11 +36,11 @@ die() { echo "setup failed: $*" >&2; exit 1; }
 : "${E2E_UNIT:?systemd unit of the sandbox service}"
 : "${E2E_STATE_DIR:?state_dir of the sandbox service}"
 E2E_LABEL=${E2E_LABEL:-biscuit-ssh.sandbox}
-for tool in cargo curl ssh ssh-keygen python3; do
+for tool in curl ssh scp ssh-keygen python3 realpath; do
     command -v "$tool" >/dev/null || die "$tool is required"
 done
-B=$PWD/target/release/biscuit-ssh
-[[ -x $B ]] || die "build the client first: cargo build --release"
+B=$(realpath "${E2E_CLIENT:-../biscuit-ssh/target/release/biscuit-ssh}" 2>/dev/null)
+[[ -x $B ]] || die "build the client first (cargo build --release in ../biscuit-ssh), or set E2E_CLIENT"
 ROOT_KEY=$(realpath "$E2E_ROOT_KEY")
 CURL=(curl -s --max-time 300)
 [[ -n ${E2E_API_CA:-} ]] && CURL+=(--cacert "$(realpath "$E2E_API_CA")")
@@ -124,7 +131,7 @@ api POST /v1/sandboxes '{"image":"hello-world"}'
 check "image that exits at once → 422, saying so" '[[ $code == 422 && $(cat body) == *"exits at once"* ]]' \
     "$code $(cat body)"
 
-create alpine:3.20 || die "cannot create a sandbox: $code $(cat body)"
+create alpine:3.20 3000 || die "cannot create a sandbox: $code $(cat body)"
 first=$name
 check "response: command reads <name>.token" '[[ $(field command) == *" -t $first.token root@$first "* ]]' \
     "$(field command)"
@@ -142,6 +149,9 @@ out=$(via "token.$first" "root@$first" 'ls /sys/class/net' 2>&1)
 check "container has no network" '[[ $out == lo ]]' "$out"
 out=$(via "token.$first" "root@$first" -s sftp 2>&1)
 check "no subsystems (sftp)" '[[ $? != 0 ]]' "$out"
+out=$("$B" ssh --bastion "$E2E_BASTION" -t "token.$first" -i id_test --command 'echo forced' "root@$first" \
+    -o LogLevel=ERROR -o UserKnownHostsFile="$WORK/known_hosts" -o StrictHostKeyChecking=yes 'echo free' </dev/null 2>&1)
+check "--command forced in a container" '[[ $out == forced ]]' "$out"
 
 scp -q id_test "token.$first" "$E2E_ADMIN:/tmp/" || die "scp"
 out=$(ssh -o BatchMode=yes "$E2E_ADMIN" "chmod 600 /tmp/id_test; biscuit-ssh ssh --bastion $E2E_BASTION \
@@ -172,6 +182,8 @@ out=$(via "old.$first" "root@$first" true 2>&1)
 check "previous token revoked" '[[ $out == *"access refused (revoked)"* ]]' "$out"
 api POST "/v1/sandboxes/$first/renew" '{"ttl":60}'
 check "renewal that would shorten → 409" '[[ $code == 409 ]]' "$code"
+api POST "/v1/sandboxes/$first/renew" '{"ttl":3600}'
+check "renewal extending by less than 30 s → 409" '[[ $code == 409 && $(cat body) == *"30 seconds"* ]]' "$code $(cat body)"
 
 via "token.$first" "root@$first" 'echo started; sleep 60; echo finished' >session.out 2>&1 &
 session=$!

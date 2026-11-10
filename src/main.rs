@@ -1,4 +1,4 @@
-//! biscuit-ssh-sandbox: a REST service creating disposable containers from
+//! biscuit-sandbox: a REST service creating disposable containers from
 //! Docker Hub images, reachable by SSH only through the biscuit-ssh bastion,
 //! with a Biscuit token restricted to the requesting address. A container
 //! lives as long as its token: it is removed when the token expires or is
@@ -30,11 +30,18 @@ use crate::state::Store;
 const DOCKER_TIMEOUT: u64 = 60;
 
 #[derive(Parser)]
-#[command(version, about = "Disposable containers reachable through the biscuit-ssh bastion")]
+#[command(
+    version,
+    about = "Short-lived sandbox containers reachable through the biscuit-ssh bastion"
+)]
 struct Args {
     /// Configuration file.
     #[arg(short, long, default_value = "/etc/biscuit-ssh/sandbox.toml")]
     config: PathBuf,
+    /// Check the configuration, the signing key, Docker, and the TLS
+    /// certificate, then exit without listening or touching the state.
+    #[arg(long)]
+    check: bool,
 }
 
 #[tokio::main]
@@ -51,6 +58,14 @@ async fn main() -> anyhow::Result<()> {
         .negotiate_version()
         .await
         .with_context(|| format!("cannot reach Docker at {socket}"))?;
+    if args.check {
+        if let Some(tls) = &config.tls {
+            biscuit_ssh_service::http::load_tls(tls).await?;
+        }
+        let tls = if config.tls.is_some() { "TLS" } else { "plain HTTP" };
+        println!("{}: valid, Docker reachable, {tls}", args.config.display());
+        return Ok(());
+    }
     let store = Store::open(&config.state_dir, &config.revocation_list, random_hex)?;
 
     let sandboxes = Arc::new(Sandboxes::new(docker, settings, store));

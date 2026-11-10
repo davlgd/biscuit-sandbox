@@ -104,7 +104,7 @@ impl Store {
     pub fn save(&mut self, now: u64) -> anyhow::Result<()> {
         self.state.revoked.retain(|_, expires_at| *expires_at > now);
         write_atomically(&self.path, &serde_json::to_vec_pretty(&self.state)?)?;
-        let mut list = String::from("# Written by biscuit-ssh-sandbox: do not edit.\n");
+        let mut list = String::from("# Written by biscuit-sandbox: do not edit.\n");
         for id in self.state.revoked.keys() {
             list.push_str(id);
             list.push('\n');
@@ -133,7 +133,7 @@ mod tests {
     use super::*;
 
     fn temporary_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("biscuit-ssh-sandbox-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("biscuit-sandbox-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

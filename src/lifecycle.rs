@@ -26,6 +26,15 @@ use crate::state::{Sandbox, Status, Store};
 /// How often expired sandboxes are looked for.
 pub const REAP_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Least extension of a sandbox's life a renewal must bring, in seconds.
+///
+/// Each renewal revokes the previous token, and its identifier stays in the
+/// revocation list until that token would have expired. Since a sandbox
+/// never lives more than `lifetime` from now, this bounds the renewals, and
+/// so the list, to about `(lifetime + elapsed) / 30` per sandbox. It stays
+/// below the shortest `ttl` (60 s), so any sandbox can be renewed.
+const MIN_RENEWAL_GAIN: u64 = 30;
+
 /// Longest a container removal may take.
 const REMOVE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -155,7 +164,11 @@ impl Sandboxes {
                     client,
                 },
             );
-            save(&mut store)?;
+            // Nothing else would ever complete or remove this reservation.
+            if let Err(failure) = save(&mut store) {
+                store.state.sandboxes.remove(&name);
+                return Err(failure);
+            }
             store.state.instance.clone()
         };
 
@@ -259,8 +272,10 @@ impl Sandboxes {
             return Err(Failure::NotFound);
         }
         let expires_at = now + ttl;
-        if expires_at < sandbox.expires_at {
-            return Err(Failure::Conflict("the renewal would shorten the sandbox's life"));
+        if expires_at < sandbox.expires_at.saturating_add(MIN_RENEWAL_GAIN) {
+            return Err(Failure::Conflict(
+                "a renewal must extend the sandbox's life by at least 30 seconds",
+            ));
         }
         let (previous, previous_expiry) = (sandbox.token.clone(), sandbox.expires_at);
         let token = self.token(name, client, expires_at)?;
@@ -610,5 +625,92 @@ mod tests {
         let published = std::fs::read_to_string(fake.dir.join("revoked")).unwrap();
         std::fs::remove_dir_all(&fake.dir).unwrap();
         assert!(published.contains(&revoked));
+    }
+
+    /// With the shortest lifetime, 60 seconds, a renewal is refused early on,
+    /// and accepted once it gains 30 seconds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_renewal_must_gain_30_seconds() {
+        let (sandboxes, fake) = sandboxes("renewal", "[]");
+        let client = "192.0.2.7".parse().unwrap();
+        let expire_in = |seconds| {
+            let sandboxes = Arc::clone(&sandboxes);
+            async move {
+                let sandbox = Sandbox {
+                    expires_at: now() + seconds,
+                    ..active()
+                };
+                sandboxes
+                    .store
+                    .lock()
+                    .await
+                    .state
+                    .sandboxes
+                    .insert("sb-new".to_owned(), sandbox);
+            }
+        };
+        expire_in(50).await;
+        let early = sandboxes.renew("sb-new", Some(60), client).await.err();
+        assert!(matches!(early, Some(Failure::Conflict(_))), "{early:?}");
+        expire_in(29).await;
+        let lease = sandboxes.renew("sb-new", Some(60), client).await.unwrap();
+        assert!(lease.expires_at >= now() + 59);
+        std::fs::remove_dir_all(fake.dir).unwrap();
+    }
+
+    /// A reservation whose first save fails must not stay behind: nothing
+    /// would ever complete or remove it, and it would hold a sandbox slot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_reservation_is_forgotten() {
+        let (sandboxes, fake) = sandboxes("failedsave", "[]");
+        // The state is written through state.tmp: a directory there makes the save fail.
+        std::fs::create_dir(fake.dir.join("state.tmp")).unwrap();
+        let image = "alpine".parse().unwrap();
+        let result = sandboxes.create(&image, None, "192.0.2.7".parse().unwrap()).await;
+        assert!(matches!(result, Err(Failure::Unavailable)));
+        assert!(sandboxes.list().await.is_empty());
+        assert_eq!(sandboxes.creations.available_permits(), 2);
+        std::fs::remove_dir_all(fake.dir).unwrap();
+    }
+
+    /// A client disconnecting during the pull must not cancel the creation
+    /// halfway: it goes on and ends, here in failure, leaving no `Creating`
+    /// reservation behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_creation_survives_its_client() {
+        use tokio::io::AsyncWriteExt;
+
+        let (sandboxes, fake) = sandboxes("disconnect", "[]");
+        let mut sandboxes = Arc::into_inner(sandboxes).unwrap();
+        sandboxes.settings.allowed_clients = vec!["127.0.0.1".parse().unwrap()];
+        let sandboxes = Arc::new(sandboxes);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app =
+            crate::api::router(Arc::clone(&sandboxes)).into_make_service_with_connect_info::<std::net::SocketAddr>();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+        let body = r#"{"image":"alpine"}"#;
+        let request = format!(
+            "POST /v1/sandboxes HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        client.write_all(request.as_bytes()).await.unwrap();
+        // The pull has started, so the reservation is persisted: hang up.
+        fake.listed.await.unwrap();
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        fake.release.send(()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !sandboxes.list().await.is_empty() || sandboxes.creations.available_permits() != 2 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the creation was left halfway");
+        server.abort();
+        std::fs::remove_dir_all(fake.dir).unwrap();
     }
 }
