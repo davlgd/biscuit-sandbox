@@ -82,15 +82,16 @@ Read your Markdown changes as GitHub renders them, at both widths of [Code rules
 
 ## Commit messages
 
-Write the subject on one line, as a capitalized imperative sentence, without a prefix or a body:
+Write the subject on one line, without a body, in the [Conventional Commits](https://www.conventionalcommits.org/) format: a type, an optional scope, then an imperative sentence in lowercase. Types are `feat`, `fix`, `docs`, `refactor`, `test`, `build`, and `chore`, and a scope names a part of the service, such as `api`. A `!` after the type marks a breaking change:
 
 ```text
-Add the sandbox service: disposable containers reachable through the bastion
-Harden sandboxes: reduced capabilities, confirmed startup check, strict renew body, bounded limits
+feat: add disposable containers reachable through the bastion
+fix: reduce capabilities, confirm startup, strict renew body, bounded limits
+chore(release): 0.2.0
 ```
 
 ## Release
 
-A release commit, `Release 0.1.0`, sets the version in `Cargo.toml`, updates `Cargo.lock`, and moves the *Unreleased* entries of the changelog under the version and its date. Tag it `v0.1.0`.
+A release commit, `chore(release): 0.2.0`, sets the version in `Cargo.toml`, updates `Cargo.lock`, and moves the *Unreleased* entries of the changelog under the version and its date. Tag it `v0.2.0`.
 
 Publish the release on crates.io once the versions of `biscuit-ssh-core` and `biscuit-ssh-service` it requires are there: `cargo publish` builds the package against them.
