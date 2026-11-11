@@ -1,1 +1,3 @@
 /target
+# Local overrides, such as a patch to a biscuit-ssh checkout
+/.cargo/config.toml

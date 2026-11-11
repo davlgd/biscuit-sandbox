@@ -13,10 +13,9 @@ categories = ["virtualization", "web-programming::http-server", "authentication"
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8.9"
-# From crates.io once published; `path` builds against a sibling checkout of
-# the biscuit-ssh repository, and `cargo publish` drops it.
-biscuit-ssh-core = { version = "0.3.0", path = "../biscuit-ssh/crates/core" }
-biscuit-ssh-service = { version = "0.3.0", path = "../biscuit-ssh/crates/service", features = ["http"] }
+# From crates.io: CONTRIBUTING.md explains how to build against a local checkout.
+biscuit-ssh-core = "0.3.0"
+biscuit-ssh-service = { version = "0.3.0", features = ["http"] }
 bollard = "0.21.1"
 clap = { version = "4.6.7", features = ["derive"] }
 futures-util = "0.3.34"

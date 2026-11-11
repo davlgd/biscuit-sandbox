@@ -267,6 +267,8 @@ dependencies = [
 [[package]]
 name = "biscuit-ssh-core"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12ea15b18ccedcb147e31ab00ec32fd25fa0f24e2c9a655b18d6bd5e15f9891d"
 dependencies = [
  "biscuit-auth",
  "thiserror 2.0.21",
@@ -275,6 +277,8 @@ dependencies = [
 [[package]]
 name = "biscuit-ssh-service"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a5abbaf77b276584dc29529ceb4242db67bc9d4f13ed0855d50aa0cbd40b8e8"
 dependencies = [
  "anyhow",
  "axum",

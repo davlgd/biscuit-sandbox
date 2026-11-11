@@ -121,7 +121,7 @@ Images come from Docker Hub only, such as `alpine`, `alpine:3.20`, or `grafana/g
 
 ### Build and install
 
-The service builds against the crates of biscuit-ssh, from a checkout of the biscuit-ssh repository in `../biscuit-ssh`, next to this one. It needs a stable Rust toolchain, and runs on Linux:
+The service builds against crates of biscuit-ssh, from crates.io. It needs stable Rust, and runs on Linux:
 
 ```bash
 cargo build --release

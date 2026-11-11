@@ -11,4 +11,4 @@ This file points coding agents to the instructions of the sandbox service, whose
 
 Report a check you couldn't run, such as the end-to-end tests without a test deployment, rather than skipping it silently.
 
-The service depends on the crates of biscuit-ssh, in `../biscuit-ssh`: change them there, with the rules of that repository.
+The service depends on crates of biscuit-ssh, from crates.io: change them in the biscuit-ssh repository, with its rules.

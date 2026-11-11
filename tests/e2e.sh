@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end scenarios against a running sandbox service and bastion. Run from
-# the repository root, with the biscuit-ssh client built in ../biscuit-ssh
-# (cargo build --release there), or E2E_CLIENT set to its path:
+# the repository root, with the biscuit-ssh client on the PATH (cargo install
+# biscuit-ssh), or E2E_CLIENT set to its path:
 #
 #   E2E_API=https://sandbox.example.com:8444 E2E_API_CA=ca.crt \
 #   E2E_BASTION=bastion.example.com:2200 E2E_ADMIN=admin@sandbox-host \
@@ -39,8 +39,8 @@ E2E_LABEL=${E2E_LABEL:-biscuit-ssh.sandbox}
 for tool in curl ssh scp ssh-keygen python3 realpath; do
     command -v "$tool" >/dev/null || die "$tool is required"
 done
-B=$(realpath "${E2E_CLIENT:-../biscuit-ssh/target/release/biscuit-ssh}" 2>/dev/null)
-[[ -x $B ]] || die "build the client first (cargo build --release in ../biscuit-ssh), or set E2E_CLIENT"
+B=$(realpath "${E2E_CLIENT:-$(command -v biscuit-ssh)}" 2>/dev/null)
+[[ -x $B ]] || die "install the client first (cargo install biscuit-ssh), or set E2E_CLIENT"
 ROOT_KEY=$(realpath "$E2E_ROOT_KEY")
 CURL=(curl -s --max-time 300)
 [[ -n ${E2E_API_CA:-} ]] && CURL+=(--cacert "$(realpath "$E2E_API_CA")")

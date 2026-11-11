@@ -4,7 +4,15 @@ This guide explains how the sandbox service works inside, which rules its code f
 
 ## Architecture
 
-The service is an application built on biscuit-ssh. It mints tokens with `biscuit-ssh-core`, and serves its API with the plumbing of `biscuit-ssh-service`. Both crates come from crates.io, or from a checkout of the biscuit-ssh repository in `../biscuit-ssh` while developing, as `Cargo.toml` declares. The bastion of biscuit-ssh, with its `[containers]` section, opens the SSH sessions.
+The service is an application built on biscuit-ssh. It mints tokens with `biscuit-ssh-core`, and serves its API with the plumbing of `biscuit-ssh-service`. Both crates come from crates.io, in the versions `Cargo.toml` requires. The bastion of biscuit-ssh, with its `[containers]` section, opens the SSH sessions.
+
+To build against a change of biscuit-ssh before its release, point Cargo to your checkout of the biscuit-ssh repository. Write this in `.cargo/config.toml`, which Git ignores, with the path of your checkout:
+
+```toml
+[patch.crates-io]
+biscuit-ssh-core = { path = "../biscuit-ssh/crates/core" }
+biscuit-ssh-service = { path = "../biscuit-ssh/crates/service" }
+```
 
 | Path               | Role                                                             |
 | ------------------ | ---------------------------------------------------------------- |
@@ -85,9 +93,4 @@ Harden sandboxes: reduced capabilities, confirmed startup check, strict renew bo
 
 A release commit, `Release 0.1.0`, sets the version in `Cargo.toml`, updates `Cargo.lock`, and moves the *Unreleased* entries of the changelog under the version and its date. Tag it `v0.1.0`.
 
-Publish the release on crates.io after the biscuit-ssh crates it depends on, `biscuit-ssh-core` and `biscuit-ssh-service`, in the versions `Cargo.toml` requires. Until then, check the package against the local checkout:
-
-```bash
-cargo package --config 'patch.crates-io.biscuit-ssh-core.path="../biscuit-ssh/crates/core"' \
-  --config 'patch.crates-io.biscuit-ssh-service.path="../biscuit-ssh/crates/service"'
-```
+Publish the release on crates.io once the versions of `biscuit-ssh-core` and `biscuit-ssh-service` it requires are there: `cargo publish` builds the package against them.
